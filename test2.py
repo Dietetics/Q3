@@ -33,7 +33,7 @@ def verifyAns(studentOutputFile, inputFile, expectedAnswer):
 
 if __name__ == '__main__':
     # Choisis les tests que tu veux exécuter
-    test_ids = [1,2,3,4,5,6,7,8,9]  # Modifie cette liste selon les tests à lancer
+    test_ids = [1,2,3,4,5,6,7,8,9,15,16,17,19]  # Modifie cette liste selon les tests à lancer
     answers = ["infini", "4", "0", "6", "18", "infini", "11", "1", "0", "105",
                "0", "320", "319", "2071", "13", "16", "27367", "105179", "infini", "720060"]
 

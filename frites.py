@@ -40,7 +40,6 @@ def write(str_content, output_file):
 # Global cache for conflict checking
 _conflict_cache = {}
 
-
 def get_conflicts_for_k(points, k):
     """Get cached conflicts for given points and k"""
     points_key = tuple(sorted(points))
@@ -75,13 +74,9 @@ def get_conflicts_for_k(points, k):
     _conflict_cache[cache_key] = result
     return result
 
-
 def can_place_fries(points, k):
-    """Check if fries of half-length k can be placed on all points using DP"""
+    """Check if fries of half-length k can be placed on all points"""
     n = len(points)
-
-    if n > 22:  # For very large inputs, use greedy approach
-        return can_place_fries_greedy(points, k)
 
     # Get cached conflicts
     h_conflicts, v_conflicts, impossible_pairs = get_conflicts_for_k(points, k)
@@ -89,6 +84,17 @@ def can_place_fries(points, k):
     # If any impossible pairs exist, return False immediately
     if impossible_pairs:
         return False
+
+    # For very large inputs, use improved algorithms
+    if n > 40:
+        return can_place_fries_advanced_greedy(points, k, h_conflicts, v_conflicts)
+
+    # For smaller inputs, use exact DP
+    return can_place_fries_exact_dp(points, k, h_conflicts, v_conflicts)
+
+def can_place_fries_exact_dp(points, k, h_conflicts, v_conflicts):
+    """Exact DP for small instances"""
+    n = len(points)
 
     # Convert conflicts to bitmasks for faster checking
     h_conflict_masks = {}
@@ -153,21 +159,11 @@ def can_place_fries(points, k):
 
     return dp(0, 0, 0)
 
-
-def can_place_fries_greedy(points, k):
-    """Optimized backtracking for large inputs"""
+def can_place_fries_advanced_greedy(points, k, h_conflicts, v_conflicts):
+    """Advanced greedy with multiple strategies and local search for large instances"""
     n = len(points)
 
-    if n <= 1:
-        return True
-
-    # Get cached conflicts
-    h_conflicts, v_conflicts, impossible_pairs = get_conflicts_for_k(points, k)
-
-    if impossible_pairs:
-        return False
-
-    # Build adjacency lists for faster conflict checking
+    # Build adjacency lists
     h_adj = [[] for _ in range(n)]
     v_adj = [[] for _ in range(n)]
 
@@ -179,49 +175,137 @@ def can_place_fries_greedy(points, k):
         v_adj[i].append(j)
         v_adj[j].append(i)
 
-    # Order points by constraint count (most constrained first)
-    constraint_count = [(len(h_adj[i]) + len(v_adj[i]), i) for i in range(n)]
-    constraint_count.sort(reverse=True)
-    ordered_points = [point for _, point in constraint_count]
+    def try_assignment_with_lookahead(strategy_func):
+        orientation = [-1] * n
+        ordered_points = strategy_func()
 
-    orientation = [-1] * n  # -1: unassigned, 0: horizontal, 1: vertical
+        # Add constraint propagation
+        def propagate():
+            changed = True
+            while changed:
+                changed = False
+                for point in range(n):
+                    if orientation[point] == -1:
+                        can_h = all(orientation[neighbor] != 0 for neighbor in h_adj[point])
+                        can_v = all(orientation[neighbor] != 1 for neighbor in v_adj[point])
 
-    def backtrack(idx):
-        if idx == n:
+                        if not can_h and not can_v:
+                            return False
+                        elif can_h and not can_v:
+                            orientation[point] = 0
+                            changed = True
+                        elif can_v and not can_h:
+                            orientation[point] = 1
+                            changed = True
             return True
 
-        point = ordered_points[idx]
+        for point in ordered_points:
+            if orientation[point] != -1:  # Already assigned by propagation
+                continue
 
-        # Try horizontal orientation
-        can_h = True
-        for neighbor in h_adj[point]:
-            if orientation[neighbor] == 0:
-                can_h = False
-                break
+            # Check available orientations
+            can_h = all(orientation[neighbor] != 0 for neighbor in h_adj[point])
+            can_v = all(orientation[neighbor] != 1 for neighbor in v_adj[point])
 
-        if can_h:
-            orientation[point] = 0
-            if backtrack(idx + 1):
-                return True
-            orientation[point] = -1
+            if not can_h and not can_v:
+                return False
+            elif can_h and not can_v:
+                orientation[point] = 0
+            elif can_v and not can_h:
+                orientation[point] = 1
+            else:
+                # Both possible - use sophisticated heuristics
+                h_conflicts_caused = 0
+                v_conflicts_caused = 0
 
-        # Try vertical orientation
-        can_v = True
-        for neighbor in v_adj[point]:
-            if orientation[neighbor] == 1:
-                can_v = False
-                break
+                # Count conflicts with unassigned neighbors
+                for neighbor in h_adj[point]:
+                    if orientation[neighbor] == -1:
+                        h_conflicts_caused += 1
+                        # Check if neighbor would have only one option left
+                        neighbor_can_v = all(orientation[nn] != 1 for nn in v_adj[neighbor] if nn != point)
+                        if not neighbor_can_v:
+                            h_conflicts_caused += 10  # Heavy penalty
 
-        if can_v:
-            orientation[point] = 1
-            if backtrack(idx + 1):
-                return True
-            orientation[point] = -1
+                for neighbor in v_adj[point]:
+                    if orientation[neighbor] == -1:
+                        v_conflicts_caused += 1
+                        # Check if neighbor would have only one option left
+                        neighbor_can_h = all(orientation[nn] != 0 for nn in h_adj[neighbor] if nn != point)
+                        if not neighbor_can_h:
+                            v_conflicts_caused += 10  # Heavy penalty
 
-        return False
+                # Choose orientation with fewer conflicts
+                if h_conflicts_caused <= v_conflicts_caused:
+                    orientation[point] = 0
+                else:
+                    orientation[point] = 1
 
-    return backtrack(0)
+            # Propagate constraints after each assignment
+            if not propagate():
+                return False
 
+        return True
+
+    # Enhanced strategies
+    def most_constrained_balanced():
+        scores = []
+        for i in range(n):
+            h_count = len(h_adj[i])
+            v_count = len(v_adj[i])
+            total = h_count + v_count
+            balance = abs(h_count - v_count)
+            # Prioritize high constraint count with high imbalance
+            score = total * 100 + balance * 50
+            scores.append((score, total, i))
+        scores.sort(reverse=True)
+        return [point for _, _, point in scores]
+
+    def least_flexible():
+        scores = []
+        for i in range(n):
+            h_count = len(h_adj[i])
+            v_count = len(v_adj[i])
+            # Points that force many neighbors into one orientation
+            flexibility = min(h_count, v_count)  # Lower is less flexible
+            scores.append((flexibility, h_count + v_count, i))
+        scores.sort()  # Least flexible first
+        return [point for _, _, point in scores]
+
+    def strategic_ordering():
+        # Hybrid approach: handle forced assignments first, then constrained ones
+        forced = []
+        constrained = []
+        flexible = []
+
+        for i in range(n):
+            h_count = len(h_adj[i])
+            v_count = len(v_adj[i])
+
+            if h_count == 0 or v_count == 0:
+                forced.append(i)
+            elif h_count + v_count >= n // 3:
+                constrained.append((h_count + v_count, i))
+            else:
+                flexible.append((h_count + v_count, i))
+
+        # Sort constrained and flexible by constraint count
+        constrained.sort(reverse=True)
+        flexible.sort()
+
+        result = forced[:]
+        result.extend([point for _, point in constrained])
+        result.extend([point for _, point in flexible])
+        return result
+
+    # Try multiple strategies
+    strategies = [most_constrained_balanced, least_flexible, strategic_ordering]
+
+    for strategy in strategies:
+        if try_assignment_with_lookahead(strategy):
+            return True
+
+    return False
 
 def find_max_k_divide_conquer(points, low, high, depth=0):
     """Divide and conquer approach to find maximum k"""
