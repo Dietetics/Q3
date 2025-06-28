@@ -155,58 +155,66 @@ def can_place_fries(points, k):
 
 
 def can_place_fries_greedy(points, k):
-    """Greedy approach for large inputs"""
+    """Optimized backtracking for large inputs"""
     n = len(points)
 
-    # Build conflict graph
-    conflicts = [[] for _ in range(n)]
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            x1, y1 = points[i]
-            x2, y2 = points[j]
-
-            # Check if they conflict when both horizontal
-            h_conflict = (y1 == y2 and abs(x1 - x2) < 2 * k + 1)
-            # Check if they conflict when both vertical
-            v_conflict = (x1 == x2 and abs(y1 - y2) < 2 * k + 1)
-
-            if h_conflict and v_conflict:
-                return False  # No valid assignment possible
-            elif h_conflict:
-                conflicts[i].append((j, 'h'))  # Can't both be horizontal
-                conflicts[j].append((i, 'h'))
-            elif v_conflict:
-                conflicts[i].append((j, 'v'))  # Can't both be vertical
-                conflicts[j].append((i, 'v'))
-
-    # Try to assign orientations greedily
-    orientation = [-1] * n  # -1: unassigned, 0: horizontal, 1: vertical
-
-    def is_valid_assignment(point, orient):
-        for neighbor, conflict_type in conflicts[point]:
-            if orientation[neighbor] != -1:
-                if conflict_type == 'h' and orient == 0 and orientation[neighbor] == 0:
-                    return False
-                if conflict_type == 'v' and orient == 1 and orientation[neighbor] == 1:
-                    return False
+    if n <= 1:
         return True
 
-    def backtrack(point):
-        if point == n:
+    # Get cached conflicts
+    h_conflicts, v_conflicts, impossible_pairs = get_conflicts_for_k(points, k)
+
+    if impossible_pairs:
+        return False
+
+    # Build adjacency lists for faster conflict checking
+    h_adj = [[] for _ in range(n)]
+    v_adj = [[] for _ in range(n)]
+
+    for i, j in h_conflicts:
+        h_adj[i].append(j)
+        h_adj[j].append(i)
+
+    for i, j in v_conflicts:
+        v_adj[i].append(j)
+        v_adj[j].append(i)
+
+    # Order points by constraint count (most constrained first)
+    constraint_count = [(len(h_adj[i]) + len(v_adj[i]), i) for i in range(n)]
+    constraint_count.sort(reverse=True)
+    ordered_points = [point for _, point in constraint_count]
+
+    orientation = [-1] * n  # -1: unassigned, 0: horizontal, 1: vertical
+
+    def backtrack(idx):
+        if idx == n:
             return True
 
-        # Try horizontal first
-        if is_valid_assignment(point, 0):
+        point = ordered_points[idx]
+
+        # Try horizontal orientation
+        can_h = True
+        for neighbor in h_adj[point]:
+            if orientation[neighbor] == 0:
+                can_h = False
+                break
+
+        if can_h:
             orientation[point] = 0
-            if backtrack(point + 1):
+            if backtrack(idx + 1):
                 return True
             orientation[point] = -1
 
-        # Try vertical
-        if is_valid_assignment(point, 1):
+        # Try vertical orientation
+        can_v = True
+        for neighbor in v_adj[point]:
+            if orientation[neighbor] == 1:
+                can_v = False
+                break
+
+        if can_v:
             orientation[point] = 1
-            if backtrack(point + 1):
+            if backtrack(idx + 1):
                 return True
             orientation[point] = -1
 
