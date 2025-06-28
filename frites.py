@@ -37,44 +37,121 @@ def write(str_content, output_file):
     file.close()
 
 
+# Global cache for conflict checking
+_conflict_cache = {}
+
+
+def get_conflicts_for_k(points, k):
+    """Get cached conflicts for given points and k"""
+    points_key = tuple(sorted(points))
+    cache_key = (points_key, k)
+
+    if cache_key in _conflict_cache:
+        return _conflict_cache[cache_key]
+
+    n = len(points)
+    h_conflicts = set()  # pairs that can't both be horizontal
+    v_conflicts = set()  # pairs that can't both be vertical
+    impossible_pairs = set()  # pairs that can't coexist
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            x1, y1 = points[i]
+            x2, y2 = points[j]
+
+            # Check horizontal conflict
+            h_conflict = (y1 == y2 and abs(x1 - x2) < 2 * k + 1)
+            # Check vertical conflict
+            v_conflict = (x1 == x2 and abs(y1 - y2) < 2 * k + 1)
+
+            if h_conflict and v_conflict:
+                impossible_pairs.add((i, j))
+            elif h_conflict:
+                h_conflicts.add((i, j))
+            elif v_conflict:
+                v_conflicts.add((i, j))
+
+    result = (h_conflicts, v_conflicts, impossible_pairs)
+    _conflict_cache[cache_key] = result
+    return result
+
+
 def can_place_fries(points, k):
-    """Check if fries of half-length k can be placed on all points"""
+    """Check if fries of half-length k can be placed on all points using DP"""
     n = len(points)
 
-    if n > 20:  # For large inputs, use greedy approach
+    if n > 22:  # For very large inputs, use greedy approach
         return can_place_fries_greedy(points, k)
 
-    # Try all possible orientations (0 = horizontal, 1 = vertical)
-    for mask in range(1 << n):
-        valid = True
+    # Get cached conflicts
+    h_conflicts, v_conflicts, impossible_pairs = get_conflicts_for_k(points, k)
 
-        # Check if this orientation assignment is valid
-        for i in range(n):
-            for j in range(i + 1, n):
-                x1, y1 = points[i]
-                x2, y2 = points[j]
+    # If any impossible pairs exist, return False immediately
+    if impossible_pairs:
+        return False
 
-                orientation_i = (mask >> i) & 1
-                orientation_j = (mask >> j) & 1
+    # Convert conflicts to bitmasks for faster checking
+    h_conflict_masks = {}
+    v_conflict_masks = {}
 
-                # If same orientation, check for overlap
-                if orientation_i == orientation_j:
-                    if orientation_i == 0:  # Both horizontal
-                        if y1 == y2 and abs(x1 - x2) < 2 * k + 1:
-                            valid = False
-                            break
-                    else:  # Both vertical
-                        if x1 == x2 and abs(y1 - y2) < 2 * k + 1:
-                            valid = False
-                            break
+    for i, j in h_conflicts:
+        if i not in h_conflict_masks:
+            h_conflict_masks[i] = 0
+        if j not in h_conflict_masks:
+            h_conflict_masks[j] = 0
+        h_conflict_masks[i] |= (1 << j)
+        h_conflict_masks[j] |= (1 << i)
 
-            if not valid:
-                break
+    for i, j in v_conflicts:
+        if i not in v_conflict_masks:
+            v_conflict_masks[i] = 0
+        if j not in v_conflict_masks:
+            v_conflict_masks[j] = 0
+        v_conflict_masks[i] |= (1 << j)
+        v_conflict_masks[j] |= (1 << i)
 
-        if valid:
+    # DP approach: try orientations more intelligently
+    memo = {}
+
+    def dp(pos, h_assigned, v_assigned):
+        """DP function: pos=current position, h/v_assigned=bitmasks of assigned orientations"""
+        if pos == n:
             return True
 
-    return False
+        state = (pos, h_assigned, v_assigned)
+        if state in memo:
+            return memo[state]
+
+        # Try horizontal orientation
+        can_horizontal = True
+        if pos in h_conflict_masks:
+            # Check if any conflicting point is already horizontal
+            if h_conflict_masks[pos] & h_assigned:
+                can_horizontal = False
+
+        if can_horizontal:
+            new_h = h_assigned | (1 << pos)
+            if dp(pos + 1, new_h, v_assigned):
+                memo[state] = True
+                return True
+
+        # Try vertical orientation
+        can_vertical = True
+        if pos in v_conflict_masks:
+            # Check if any conflicting point is already vertical
+            if v_conflict_masks[pos] & v_assigned:
+                can_vertical = False
+
+        if can_vertical:
+            new_v = v_assigned | (1 << pos)
+            if dp(pos + 1, h_assigned, new_v):
+                memo[state] = True
+                return True
+
+        memo[state] = False
+        return False
+
+    return dp(0, 0, 0)
 
 
 def can_place_fries_greedy(points, k):
@@ -138,45 +215,77 @@ def can_place_fries_greedy(points, k):
     return backtrack(0)
 
 
+def find_max_k_divide_conquer(points, low, high, depth=0):
+    """Divide and conquer approach to find maximum k"""
+    # Base case
+    if low > high:
+        return low - 1
+
+    # Avoid infinite recursion
+    if depth > 30:
+        return low
+
+    # If range is small, use linear search
+    if high - low <= 3:
+        result = low - 1
+        for k in range(low, high + 1):
+            if can_place_fries(points, k):
+                result = k
+            else:
+                break
+        return result
+
+    # Divide: find middle point
+    mid = (low + high) // 2
+
+    # Conquer: check if mid works
+    if can_place_fries(points, mid):
+        # If mid works, search in upper half
+        return find_max_k_divide_conquer(points, mid + 1, high, depth + 1)
+    else:
+        # If mid doesn't work, search in lower half
+        return find_max_k_divide_conquer(points, low, mid - 1, depth + 1)
+
 
 def find_max_k(points):
-    """Find the maximum k for which fries can be placed"""
+    """Find the maximum k for which fries can be placed using divide-and-conquer"""
     n = len(points)
-
 
     # Cas 1: if only one point, infinite is possible
     if n <= 1:
         return "infini"
-
 
     # Cas 2: si k=0
     # Check if k=0 is possible
     if not can_place_fries(points, 0):
         return "0"
 
+    # Calculate intelligent upper bound
+    max_distance = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            x1, y1 = points[i]
+            x2, y2 = points[j]
 
-    # Cas 3: si infini, checked
-    # Try increasingly large k values until we find one that doesn't work
-    # But first check if infinite is possible by trying a very large k
-    large_k = 1000  # Large enough k to test if infinite is possible
+            # Distance when points are on same line
+            if x1 == x2:  # Same column
+                max_distance = max(max_distance, abs(y1 - y2))
+            elif y1 == y2:  # Same row
+                max_distance = max(max_distance, abs(x1 - x2))
 
-    if can_place_fries(points, large_k):
+    # If no points share same row/column, infinite is possible
+    if max_distance == 0:
         return "infini"
 
+    # Set reasonable upper bound
+    upper_bound = max_distance // 2 + 1
 
-    # Cas 4: trouver k, checked
-    # Binary search for maximum k
-    # Find the largest k that works
-    left, right = 0, large_k
-    result = 0
+    # Check if infinite is possible
+    if can_place_fries(points, upper_bound):
+        return "infini"
 
-    while left <= right:
-        mid = (left + right) // 2
-        if can_place_fries(points, mid):
-            result = mid
-            left = mid + 1
-        else:
-            right = mid - 1
+    # Use divide and conquer to find maximum k
+    result = find_max_k_divide_conquer(points, 0, upper_bound)
 
     return str(result)
 
